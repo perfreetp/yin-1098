@@ -23,7 +23,17 @@ export async function navigateToModule(key: string) {
       window.location.hash = key
     }
   } else {
-    window.location.hash = key
+    const baseUrl = window.location.origin + window.location.pathname
+    const targetUrl = baseUrl + '#/' + key
+    const existingWindow = window.open('', key)
+    if (existingWindow && !existingWindow.closed && existingWindow.location.href === targetUrl) {
+      existingWindow.focus()
+    } else {
+      window.open(targetUrl, key, 'width=1200,height=800')
+    }
+    if (window.name === key) {
+      window.location.hash = key
+    }
   }
 }
 

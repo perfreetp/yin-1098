@@ -14,6 +14,7 @@ function App() {
   useEffect(() => {
     const hash = window.location.hash.replace('#/', '') || 'dashboard'
     setRoute(hash)
+    window.name = hash
     if (!initialized) {
       initSimulation()
     }
@@ -23,6 +24,7 @@ function App() {
     const handleHashChange = () => {
       const hash = window.location.hash.replace('#/', '') || 'dashboard'
       setRoute(hash)
+      window.name = hash
     }
     window.addEventListener('hashchange', handleHashChange)
     return () => window.removeEventListener('hashchange', handleHashChange)
@@ -33,6 +35,7 @@ function App() {
       const unsub = (window as any).electronAPI.onNavigateRoute((targetRoute: string) => {
         setRoute(targetRoute)
         window.location.hash = targetRoute
+        window.name = targetRoute
       })
       return unsub
     }

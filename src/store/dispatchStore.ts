@@ -39,6 +39,62 @@ function loadStateFromStorage(): Partial<DispatchState> | null {
   }
 }
 
+function migrateVehicleData(vehicles: any[], zones: Zone[]): Vehicle[] {
+  const entryIds = ['entry_1', 'entry_2', 'entry_3']
+  const queueTypes: QueueType[] = ['power_30kw', 'power_60kw', 'power_120kw', 'power_180kw', 'power_240kw']
+  let vehicleIndex = 0
+
+  const processedVehicles = vehicles.map((v: any) => {
+    const result = { ...v }
+    if (!result.entryId) {
+      if (result.currentQueue) {
+        const match = zones.find(z => z.queues.some(q => q.id === result.currentQueue))
+        if (match) {
+          const queue = match.queues.find(q => q.id === result.currentQueue)
+          if (queue) {
+            result.entryId = queue.entryId
+            result.laneId = queue.laneId
+          }
+        }
+      }
+      if (!result.entryId) {
+        result.entryId = entryIds[vehicleIndex % entryIds.length]
+      }
+    }
+    if (!result.laneId) {
+      const laneIdx = parseInt(result.entryId.replace('entry_', '')) - 1
+      result.laneId = `lane_${(laneIdx % 3) + 1}`
+    }
+    if (!result.currentQueue || result.currentQueue.indexOf('_') < 0) {
+      const zoneId = result.zoneId || 'zone_a'
+      const queueType = queueTypes[vehicleIndex % queueTypes.length]
+      result.currentQueue = `q_${zoneId}_${queueType}`
+    }
+    if (result.queuePosition === undefined || result.queuePosition === null) {
+      result.queuePosition = 0
+    }
+    if (!result.arrivedAt) result.arrivedAt = result.entryTime || new Date()
+    if (!result.scheduledAt) result.scheduledAt = null
+    if (!result.completedAt) result.completedAt = null
+    if (!result.requiredPower && result.currentQueue) {
+      const match = result.currentQueue.match(/power_(\d+)kw/)
+      if (match) result.requiredPower = parseInt(match[1])
+    }
+    vehicleIndex++
+    return result as Vehicle
+  })
+
+  const queueCounters: Record<string, number> = {}
+  return processedVehicles.map(v => {
+    if (v.status === 'queuing' && v.currentQueue) {
+      const qId = v.currentQueue
+      queueCounters[qId] = (queueCounters[qId] || 0) + 1
+      return { ...v, queuePosition: queueCounters[qId] }
+    }
+    return { ...v, queuePosition: 0 }
+  })
+}
+
 interface DispatchState {
   currentOperator: Operator
   operators: Operator[]
@@ -620,19 +676,34 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
     let initialLogs: OperationLog[] = []
 
     if (persisted) {
-      if (persisted.vehicles) initialVehicles = persisted.vehicles.map((v: any) => ({
-        ...v,
-        entryTime: new Date(v.entryTime),
-        arrivedAt: new Date(v.arrivedAt),
-        scheduledAt: v.scheduledAt ? new Date(v.scheduledAt) : null,
-        completedAt: v.completedAt ? new Date(v.completedAt) : null,
-        chargingStartTime: v.chargingStartTime ? new Date(v.chargingStartTime) : null
-      }))
+      if (persisted.vehicles) {
+        let rawVehicles = persisted.vehicles.map((v: any) => ({
+          ...v,
+          entryTime: new Date(v.entryTime),
+          arrivedAt: new Date(v.arrivedAt),
+          scheduledAt: v.scheduledAt ? new Date(v.scheduledAt) : null,
+          completedAt: v.completedAt ? new Date(v.completedAt) : null,
+          chargingStartTime: v.chargingStartTime ? new Date(v.chargingStartTime) : null
+        }))
+        if (zones.length > 0) {
+          rawVehicles = migrateVehicleData(rawVehicles, zones)
+        }
+        initialVehicles = rawVehicles
+      }
       if (persisted.chargers) initialChargers = persisted.chargers
-      if (persisted.zones) zones = persisted.zones.map((z: any) => ({
-        ...z,
-        queues: z.queues || []
-      }))
+      if (persisted.zones) {
+        zones = persisted.zones.map((z: any) => {
+          if (!z.queues || z.queues.length === 0) {
+            const zoneCopy = { ...z, queues: [] }
+            const freshZones = mockZones.map(mz => ({ ...mz }))
+            createInitialQueues(freshZones)
+            const freshZone = freshZones.find((fz: any) => fz.id === z.id)
+            if (freshZone) zoneCopy.queues = freshZone.queues
+            return zoneCopy
+          }
+          return { ...z, queues: z.queues || [] }
+        })
+      }
       if (persisted.alerts) initialAlerts = persisted.alerts.map((a: any) => ({
         ...a,
         createdAt: new Date(a.createdAt),
@@ -844,6 +915,7 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
     }
     set(partialState)
     saveStateToStorage(partialState)
+    state.broadcastStateChange(partialState)
   },
 
   resetPersistData: () => {
