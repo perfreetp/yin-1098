@@ -28,6 +28,16 @@ function App() {
     return () => window.removeEventListener('hashchange', handleHashChange)
   }, [])
 
+  useEffect(() => {
+    if ((window as any).electronAPI?.onNavigateRoute) {
+      const unsub = (window as any).electronAPI.onNavigateRoute((targetRoute: string) => {
+        setRoute(targetRoute)
+        window.location.hash = targetRoute
+      })
+      return unsub
+    }
+  }, [])
+
   const renderPage = () => {
     switch (route) {
       case 'dashboard': return <Dashboard />

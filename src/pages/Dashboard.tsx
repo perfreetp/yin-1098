@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useDispatchStore } from '../store/dispatchStore'
-import PageHeader from '../components/PageHeader'
+import PageHeader, { navigateToModule } from '../components/PageHeader'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, PieChart, Pie, Cell, AreaChart, Area, Legend
@@ -359,7 +359,7 @@ function Dashboard() {
             <div className="card-title">
               ⚠️ 实时预警
               <div style={{ marginLeft: 'auto' }}>
-                <button className="btn btn-sm btn-secondary" onClick={() => window.location.hash = 'events'}>查看全部 →</button>
+                <button className="btn btn-sm btn-secondary" onClick={() => navigateToModule('events')}>查看全部 →</button>
               </div>
             </div>
             <div style={{ flex: 1, overflow: 'auto' }}>
@@ -373,7 +373,7 @@ function Dashboard() {
                     background: `${levelColor}12`, borderLeft: `3px solid ${levelColor}`,
                     borderRadius: 4, cursor: 'pointer'
                   }}
-                    onClick={() => window.location.hash = 'events'}
+                    onClick={() => navigateToModule('events')}
                   >
                     <div className="flex-row" style={{ alignItems: 'center', gap: 8, marginBottom: 4 }}>
                       <span className="badge" style={{ background: `${levelColor}22`, color: levelColor, borderColor: levelColor }}>{levelLabel}</span>

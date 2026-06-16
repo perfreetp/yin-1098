@@ -16,12 +16,16 @@ export interface Vehicle {
   queuePosition: number
   status: VehicleStatus
   entryTime: Date
+  arrivedAt: Date
+  scheduledAt: Date | null
+  completedAt: Date | null
   assignedCharger: string | null
   batteryLevel: number
   requiredPower: number
   expectedChargeTime: number
   chargingStartTime: Date | null
   zoneId: string
+  entryId: string
   laneId: string
   mapX: number
   mapY: number

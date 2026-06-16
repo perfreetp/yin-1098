@@ -15,6 +15,18 @@ const navItems = [
   { key: 'settings', label: '设置中心', icon: '⚙️' }
 ]
 
+export async function navigateToModule(key: string) {
+  if ((window as any).electronAPI) {
+    try {
+      await (window as any).electronAPI.navigateWindow(key)
+    } catch (e) {
+      window.location.hash = key
+    }
+  } else {
+    window.location.hash = key
+  }
+}
+
 function PageHeader({ currentPage, title }: Props) {
   const { currentStrategy, strategies, currentOperator, currentTime } = useDispatchStore()
   const [timeStr, setTimeStr] = useState('')
@@ -32,23 +44,6 @@ function PageHeader({ currentPage, title }: Props) {
   }, [])
 
   const strategy = strategies.find(s => s.type === currentStrategy)
-
-  const handleNav = async (key: string) => {
-    if ((window as any).electronAPI) {
-      try {
-        const windows = await (window as any).electronAPI.listWindows()
-        if (windows.includes(key)) {
-          await (window as any).electronAPI.showWindow(key)
-        } else {
-          await (window as any).electronAPI.openWindow(key)
-        }
-      } catch (e) {
-        window.location.hash = key
-      }
-    } else {
-      window.location.hash = key
-    }
-  }
 
   return (
     <div className="page-header">
@@ -83,7 +78,7 @@ function PageHeader({ currentPage, title }: Props) {
           <button
             key={item.key}
             className={`nav-btn ${currentPage === item.key ? 'active' : ''}`}
-            onClick={() => handleNav(item.key)}
+            onClick={() => navigateToModule(item.key)}
           >
             {item.icon} {item.label}
           </button>

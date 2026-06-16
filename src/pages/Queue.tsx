@@ -39,11 +39,9 @@ function Queue() {
   const queuingByQueue = useMemo(() => {
     const map: Record<string, Vehicle[]> = {}
     vehicles.filter(v => v.status === 'queuing').forEach(v => {
-      if (selectedEntry !== 'all') {
-        const matchZone = zones.find(z => z.queues.some(q => q.id === v.currentQueue && q.entryId === selectedEntry))
-        if (!matchZone) return
-      }
+      if (selectedEntry !== 'all' && v.entryId !== selectedEntry) return
       const key = v.currentQueue
+      if (!key) return
       if (!map[key]) map[key] = []
       map[key].push(v)
     })

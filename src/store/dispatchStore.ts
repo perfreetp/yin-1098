@@ -218,50 +218,64 @@ const createInitialChargers = (): Charger[] => {
 
 const createInitialVehicles = (): Vehicle[] => {
   const vehicles: Vehicle[] = []
-  const statuses: VehicleStatus[] = ['queuing', 'queuing', 'moving', 'charging', 'charging', 'completed', 'exiting']
   const zones = ['zone_a', 'zone_b', 'zone_c', 'zone_d']
   const queueTypes: QueueType[] = ['power_30kw', 'power_60kw', 'power_120kw', 'power_180kw', 'power_240kw']
+  const entryIds = ['entry_1', 'entry_2', 'entry_3']
+  const laneIds = ['lane_1', 'lane_2', 'lane_3']
+  const statuses: VehicleStatus[] = ['queuing', 'queuing', 'queuing', 'queuing', 'moving', 'charging', 'charging', 'completed']
 
-  for (let i = 0; i < 42; i++) {
-    const status = statuses[i % statuses.length]
-    const zoneId = zones[i % zones.length]
-    const queueType = queueTypes[i % queueTypes.length]
-    const now = new Date()
-    const entryMinutesAgo = Math.floor(Math.random() * 90 + 5)
-    const isCharging = status === 'charging' || status === 'completed'
+  let idx = 0
+  for (const zoneId of zones) {
+    for (const queueType of queueTypes) {
+      const queueId = `q_${zoneId}_${queueType}`
+      const entryId = entryIds[queueTypes.indexOf(queueType) % entryIds.length]
+      const laneId = laneIds[queueTypes.indexOf(queueType) % laneIds.length]
+      const countInQueue = 2 + Math.floor(Math.random() * 4)
+      for (let j = 0; j < countInQueue; j++) {
+        const status = statuses[idx % statuses.length]
+        const now = new Date()
+        const entryMinutesAgo = Math.floor(Math.random() * 90 + 5)
+        const isCharging = status === 'charging' || status === 'completed'
+        const powerNum = parseInt(queueType.replace('power_', '').replace('kw', ''))
 
-    let mapX = 60 + Math.floor(Math.random() * 880)
-    let mapY = 60 + Math.floor(Math.random() * 700)
+        let mapX = 60 + Math.floor(Math.random() * 880)
+        let mapY = 60 + Math.floor(Math.random() * 700)
+        if (isCharging) {
+          mapX = 550 + (idx % 5) * 80
+          mapY = zoneId === 'zone_a' ? 120 + Math.floor(idx / 5) * 50 :
+                 zoneId === 'zone_b' ? 380 + Math.floor(idx / 5) * 50 :
+                 zoneId === 'zone_c' ? 600 + Math.floor(idx / 5) * 45 : 390
+        }
 
-    if (isCharging) {
-      mapX = 550 + (i % 5) * 80
-      mapY = zoneId === 'zone_a' ? 120 + Math.floor(i / 5) * 50 :
-             zoneId === 'zone_b' ? 380 + Math.floor(i / 5) * 50 :
-             zoneId === 'zone_c' ? 600 + Math.floor(i / 5) * 45 : 390
+        vehicles.push({
+          id: 'v_' + generateId(),
+          plateNumber: plateNumbers[idx % plateNumbers.length] + String(idx + 1).padStart(2, '0'),
+          vehicleType: idx % 4 === 0 ? 'bus' : idx % 3 === 0 ? 'van' : idx % 5 === 0 ? 'small' : 'truck',
+          driverName: driverNames[idx % driverNames.length],
+          driverPhone: '138****' + String(1000 + idx * 137).slice(-4),
+          currentQueue: status === 'queuing' ? queueId : '',
+          queuePosition: status === 'queuing' ? j + 1 : 0,
+          status,
+          entryTime: new Date(now.getTime() - entryMinutesAgo * 60000),
+          arrivedAt: new Date(now.getTime() - entryMinutesAgo * 60000),
+          scheduledAt: null,
+          completedAt: null,
+          assignedCharger: isCharging ? `${zoneId}_c${(idx % 8) + 1}` : null,
+          batteryLevel: isCharging ? Math.floor(Math.random() * 50 + 50) : Math.floor(Math.random() * 40 + 10),
+          requiredPower: powerNum,
+          expectedChargeTime: Math.floor(Math.random() * 60 + 30),
+          chargingStartTime: isCharging ? new Date(now.getTime() - Math.floor(Math.random() * 45 + 5) * 60000) : null,
+          zoneId,
+          entryId,
+          laneId,
+          mapX,
+          mapY,
+          priority: idx % 5 === 0 ? 2 : idx % 7 === 0 ? 3 : 1,
+          remark: idx % 9 === 0 ? 'VIP预约车辆' : ''
+        })
+        idx++
+      }
     }
-
-    vehicles.push({
-      id: 'v_' + generateId(),
-      plateNumber: plateNumbers[i % plateNumbers.length] + (i > 14 ? String(i).slice(-2) : ''),
-      vehicleType: i % 4 === 0 ? 'bus' : i % 3 === 0 ? 'van' : i % 5 === 0 ? 'small' : 'truck',
-      driverName: driverNames[i % driverNames.length],
-      driverPhone: '138****' + String(1000 + i * 137).slice(-4),
-      currentQueue: `q_${zoneId}_${queueType}`,
-      queuePosition: status === 'queuing' ? (i % 8) + 1 : 0,
-      status,
-      entryTime: new Date(now.getTime() - entryMinutesAgo * 60000),
-      assignedCharger: isCharging ? `${zoneId}_c${(i % 8) + 1}` : null,
-      batteryLevel: isCharging ? Math.floor(Math.random() * 50 + 50) : Math.floor(Math.random() * 40 + 10),
-      requiredPower: [30, 60, 120, 180, 240][i % 5],
-      expectedChargeTime: Math.floor(Math.random() * 60 + 30),
-      chargingStartTime: isCharging ? new Date(now.getTime() - Math.floor(Math.random() * 45 + 5) * 60000) : null,
-      zoneId,
-      laneId: `lane_${(i % 3) + 1}`,
-      mapX,
-      mapY,
-      priority: i % 5 === 0 ? 2 : i % 7 === 0 ? 3 : 1,
-      remark: i % 9 === 0 ? 'VIP预约车辆' : ''
-    })
   }
   return vehicles
 }
@@ -446,14 +460,16 @@ const createInitialQueues = (zones: Zone[]) => {
     { type: 'power_180kw', name: '180kW超充队列' },
     { type: 'power_240kw', name: '240kW特快队列' }
   ]
+  const entryIds = ['entry_1', 'entry_2', 'entry_3']
+  const laneIds = ['lane_1', 'lane_2', 'lane_3']
   zones.forEach(zone => {
     zone.queues = queueTypes.map((qt, idx) => ({
       id: `q_${zone.id}_${qt.type}`,
       name: `${zone.code}区-${qt.name}`,
       type: qt.type,
       zoneId: zone.id,
-      entryId: idx % 2 === 0 ? 'entry_1' : 'entry_2',
-      laneId: `lane_${(idx % 3) + 1}`,
+      entryId: entryIds[idx % entryIds.length],
+      laneId: laneIds[idx % laneIds.length],
       maxLength: 15,
       currentLength: 0,
       vehicles: [],
@@ -606,9 +622,11 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
     if (persisted) {
       if (persisted.vehicles) initialVehicles = persisted.vehicles.map((v: any) => ({
         ...v,
+        entryTime: new Date(v.entryTime),
         arrivedAt: new Date(v.arrivedAt),
         scheduledAt: v.scheduledAt ? new Date(v.scheduledAt) : null,
-        completedAt: v.completedAt ? new Date(v.completedAt) : null
+        completedAt: v.completedAt ? new Date(v.completedAt) : null,
+        chargingStartTime: v.chargingStartTime ? new Date(v.chargingStartTime) : null
       }))
       if (persisted.chargers) initialChargers = persisted.chargers
       if (persisted.zones) zones = persisted.zones.map((z: any) => ({
@@ -644,7 +662,7 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
 
     const recalcZones = recalcZoneStats(initialVehicles, initialChargers, zones)
 
-    set({
+    const fullState = {
       vehicles: initialVehicles,
       chargers: initialChargers,
       zones: recalcZones,
@@ -658,7 +676,10 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
       historyReports: initialHistoryReports,
       operationLogs: initialLogs,
       currentTime: new Date()
-    })
+    }
+
+    set(fullState)
+    saveStateToStorage(fullState)
 
     const interval = setInterval(() => {
       get().tick()

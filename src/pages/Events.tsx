@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useDispatchStore } from '../store/dispatchStore'
-import PageHeader from '../components/PageHeader'
+import PageHeader, { navigateToModule } from '../components/PageHeader'
 import { AlertEvent, EventType, AlertLevel } from '../types'
 
 function Events() {
@@ -398,7 +398,7 @@ function Events() {
                         🎯 标记解决
                       </button>
                       <button className="btn btn-warning">📞 通知现场</button>
-                      <button className="btn btn-secondary" onClick={() => window.location.hash = 'broadcast'}>
+                      <button className="btn btn-secondary" onClick={() => navigateToModule('broadcast')}>
                         📢 广播通知
                       </button>
                     </div>

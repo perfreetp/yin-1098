@@ -101,6 +101,18 @@ ipcMain.handle('window:minimize', (_event, type) => {
   return false
 })
 
+ipcMain.handle('window:navigate', (_event, type) => {
+  let win = windows.get(type)
+  if (!win) {
+    win = createWindow(type)
+    return true
+  }
+  if (win.isMinimized()) win.restore()
+  win.focus()
+  win.webContents.send('navigate:route', type)
+  return true
+})
+
 ipcMain.on('dispatch:notify', (event, data) => {
   windows.forEach((win) => {
     if (win.webContents !== event.sender) {
