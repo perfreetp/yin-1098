@@ -34,9 +34,10 @@ function PageHeader({ currentPage, title }: Props) {
   const strategy = strategies.find(s => s.type === currentStrategy)
 
   const handleNav = (key: string) => {
-    window.location.hash = key
     if ((window as any).electronAPI) {
-      ;(window as any).electronAPI.openWindow(key)
+      (window as any).electronAPI.openWindow(key)
+    } else {
+      window.location.hash = key
     }
   }
 

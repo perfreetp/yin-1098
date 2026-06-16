@@ -4,7 +4,8 @@ import PageHeader from '../components/PageHeader'
 import { BroadcastMessage } from '../types'
 
 function Broadcast() {
-  const { broadcasts, zones, entries, currentOperator, createBroadcast, cancelBroadcast, executeBroadcast } = useDispatchStore()
+  const { broadcasts, zones, entries, currentOperator,
+    createBroadcast, cancelBroadcast, executeBroadcast, saveBroadcastDraft } = useDispatchStore()
 
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
@@ -25,7 +26,48 @@ function Broadcast() {
     { id: 6, title: '火情应急演练通知', content: '各位司机朋友，园区将于{时间}进行消防应急演练，届时会有警报声响，请不要惊慌，听从现场工作人员指挥，谢谢配合！', type: 'both' },
   ]
 
-  const handleSubmit = () => {
+  const handleSendNow = () => {
+    if (!title || !content) {
+      alert('请填写标题和内容')
+      return
+    }
+    const b = createBroadcast({
+      title, content, type,
+      targetZones: selectedZones,
+      targetEntries: selectedEntries,
+      repeatCount, repeatInterval
+    }, true)
+    const deliveredZones = b.deliveryStatus
+      .filter(d => zones.some(z => z.id === d.zoneId))
+      .map(d => zones.find(z => z.id === d.zoneId)?.name || d.zoneId)
+    const deliveredEntries = b.deliveryStatus
+      .filter(d => entries.some(e => e.id === d.zoneId))
+      .map(d => entries.find(e => e.id === d.zoneId)?.name || d.zoneId)
+    let msg = '广播已立即下发！\n\n已下发到：\n'
+    if (deliveredZones.length > 0) msg += `区域: ${deliveredZones.join('、')}\n`
+    if (deliveredEntries.length > 0) msg += `入口屏: ${deliveredEntries.join('、')}\n`
+    alert(msg)
+    setTitle('')
+    setContent('')
+  }
+
+  const handleSaveDraft = () => {
+    if (!title || !content) {
+      alert('请填写标题和内容')
+      return
+    }
+    saveBroadcastDraft({
+      title, content, type,
+      targetZones: selectedZones,
+      targetEntries: selectedEntries,
+      repeatCount, repeatInterval
+    })
+    alert('草稿已保存，可在广播记录中查看或稍后下发')
+    setTitle('')
+    setContent('')
+  }
+
+  const handleSchedule = () => {
     if (!title || !content) {
       alert('请填写标题和内容')
       return
@@ -35,8 +77,8 @@ function Broadcast() {
       targetZones: selectedZones,
       targetEntries: selectedEntries,
       repeatCount, repeatInterval
-    })
-    alert('广播已创建成功！')
+    }, false)
+    alert('已添加到待执行队列，将在触发条件满足时自动下发')
     setTitle('')
     setContent('')
   }
@@ -215,11 +257,14 @@ function Broadcast() {
                 </div>
 
                 <div className="flex-row" style={{ gap: 10, marginTop: 8 }}>
-                  <button className="btn btn-lg btn-success" style={{ flex: 1 }} onClick={handleSubmit}>
+                  <button className="btn btn-lg btn-success" style={{ flex: 1 }} onClick={handleSendNow}>
                     🚀 立即下发
                   </button>
-                  <button className="btn btn-lg btn-warning" style={{ flex: 1 }}>
-                    ⏰ 定时发送
+                  <button className="btn btn-lg btn-warning" style={{ flex: 1 }} onClick={handleSchedule}>
+                    ⏰ 待执行
+                  </button>
+                  <button className="btn btn-lg btn-primary" style={{ flex: 1 }} onClick={handleSaveDraft}>
+                    💾 保存草稿
                   </button>
                   <button className="btn btn-lg btn-secondary" onClick={() => { setTitle(''); setContent('') }}>
                     🗑 清空
@@ -307,11 +352,14 @@ function Broadcast() {
                     <th>重复</th>
                     <th>操作人</th>
                     <th>状态</th>
+                    <th>下发到</th>
                     <th>操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredBroadcasts.map((b: BroadcastMessage) => (
+                  {filteredBroadcasts.map((b: BroadcastMessage) => {
+                    const status = b.status as any
+                    return (
                     <tr key={b.id}>
                       <td style={{ fontFamily: 'Consolas', fontSize: 11, color: '#88a0c0' }}>{formatTime(b.createdAt)}</td>
                       <td style={{ fontWeight: 500 }}>{b.title}</td>
@@ -327,23 +375,41 @@ function Broadcast() {
                       <td style={{ fontSize: 12 }}>{b.repeatCount}次 / {b.repeatInterval}分</td>
                       <td style={{ fontSize: 12 }}>{b.createdBy === currentOperator.id ? currentOperator.name : b.createdBy}</td>
                       <td>
-                        <span className={`badge ${b.status === 'broadcasting' ? 'badge-green' : b.status === 'completed' ? 'badge-blue' : b.status === 'cancelled' ? 'badge-gray' : 'badge-yellow'}`}>
-                          {b.status === 'broadcasting' ? '播放中' : b.status === 'completed' ? '已完成' : b.status === 'cancelled' ? '已取消' : '待执行'}
+                        <span className={`badge ${status === 'broadcasting' ? 'badge-green' : status === 'completed' ? 'badge-blue' : status === 'cancelled' ? 'badge-gray' : status === 'draft' ? 'badge-gray' : 'badge-yellow'}`}>
+                          {status === 'broadcasting' ? '播放中' : status === 'completed' ? '已完成' : status === 'cancelled' ? '已取消' : status === 'draft' ? '草稿' : '待执行'}
                         </span>
                       </td>
                       <td>
+                        {b.deliveryStatus && b.deliveryStatus.length > 0 ? (
+                          <div style={{ fontSize: 11 }}>
+                            <div>
+                              {b.deliveryStatus.filter(d => zones.some(z => z.id === d.zoneId)).map(d => {
+                                const z = zones.find(z => z.id === d.zoneId)
+                                return <span key={d.zoneId} className="badge badge-green" style={{ marginRight: 3, fontSize: 10 }}>{z?.code || d.zoneId}区</span>
+                              })}
+                              {b.deliveryStatus.filter(d => entries.some(e => e.id === d.zoneId)).map(d => {
+                                const e = entries.find(e => e.id === d.zoneId)
+                                return <span key={d.zoneId} className="badge badge-blue" style={{ marginRight: 3, fontSize: 10 }}>{e?.name || d.zoneId}</span>
+                              })}
+                            </div>
+                          </div>
+                        ) : (
+                          <span style={{ color: '#6680a0', fontSize: 11 }}>未下发</span>
+                        )}
+                      </td>
+                      <td>
                         <div className="flex-row" style={{ gap: 4 }}>
-                          {b.status === 'pending' && (
+                          {(status === 'pending' || status === 'draft') && (
                             <button className="btn btn-sm btn-success" onClick={() => executeBroadcast(b.id)}>播放</button>
                           )}
-                          {b.status === 'broadcasting' && (
+                          {status === 'broadcasting' && (
                             <button className="btn btn-sm btn-danger" onClick={() => cancelBroadcast(b.id)}>停止</button>
                           )}
                           <button className="btn btn-sm btn-secondary">详情</button>
                         </div>
                       </td>
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             </div>

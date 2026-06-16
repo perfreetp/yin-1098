@@ -130,7 +130,7 @@ export interface BroadcastMessage {
   repeatInterval: number
   createdAt: Date
   createdBy: string
-  status: 'pending' | 'broadcasting' | 'completed' | 'cancelled'
+  status: 'draft' | 'pending' | 'broadcasting' | 'completed' | 'cancelled'
   deliveryStatus: { zoneId: string; status: string; time: Date }[]
 }
 
@@ -207,6 +207,19 @@ export interface DailyReport {
   eventSummary: { type: string; count: number; resolved: number }[]
   operatorPerformance: { name: string; operations: number; resolved: number; avgResponse: number }[]
   comments: string
+}
+
+export interface HistoryReport {
+  id: string
+  name: string
+  type: 'daily' | 'weekly' | 'monthly' | 'custom'
+  period: string
+  generatedAt: Date
+  generatedBy: string
+  fileSize: string
+  status: 'generated' | 'generating'
+  summary: string
+  pdfData?: string
 }
 
 export interface MapPosition {

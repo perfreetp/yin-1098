@@ -7,7 +7,8 @@ import {
 } from 'recharts'
 
 function Review() {
-  const { zones, chargers, alerts, operators, operationLogs, shiftStats, vehicles, strategies, currentStrategy } = useDispatchStore()
+  const { zones, chargers, alerts, operators, operationLogs, shiftStats, vehicles, strategies, currentStrategy,
+    historyReports, generateDailyReport, generateWeeklyReport, downloadReport, previewReport } = useDispatchStore()
 
   const [period, setPeriod] = useState<'shift' | 'day' | 'week' | 'custom'>('shift')
   const [tab, setTab] = useState<'overview' | 'zone' | 'charger' | 'operator' | 'event' | 'report'>('overview')
@@ -68,7 +69,14 @@ function Review() {
   const recentLogs = operationLogs.slice(0, 20)
 
   const exportReport = (type: 'daily' | 'weekly') => {
-    alert(`${type === 'daily' ? '日报' : '周报'}已生成，正在导出PDF...`)
+    let report
+    if (type === 'daily') {
+      report = generateDailyReport()
+      alert(`日报生成成功！\n\n报表名称：${report.name}\n生成时间：${new Date(report.generatedAt).toLocaleString('zh-CN')}\n文件大小：${report.fileSize}\n\n可在下方历史报表中预览或下载`)
+    } else {
+      report = generateWeeklyReport()
+      alert(`周报生成成功！\n\n报表名称：${report.name}\n生成时间：${new Date(report.generatedAt).toLocaleString('zh-CN')}\n文件大小：${report.fileSize}\n\n可在下方历史报表中预览或下载`)
+    }
   }
 
   return (
@@ -692,34 +700,28 @@ function Review() {
                   </tr>
                 </thead>
                 <tbody>
-                  {[
-                    { name: '2024-06-16 运营日报', type: '日报', period: '2024-06-16', size: '1.8MB' },
-                    { name: '2024-W24 周度分析周报', type: '周报', period: '2024-W24', size: '3.2MB' },
-                    { name: '2024-06-15 运营日报', type: '日报', period: '2024-06-15', size: '1.7MB' },
-                    { name: '2024-06-14 运营日报', type: '日报', period: '2024-06-14', size: '1.9MB' },
-                    { name: '2024-W23 周度分析周报', type: '周报', period: '2024-W23', size: '3.4MB' },
-                    { name: '高峰时段专项分析', type: '自定义', period: '2024-06-10~16', size: '2.5MB' },
-                    { name: '充电桩故障月报', type: '月报', period: '2024-05', size: '4.1MB' }
-                  ].map((r, idx) => (
-                    <tr key={idx}>
+                  {historyReports.map((r) => {
+                    const rtype = r.type as any
+                    return (
+                    <tr key={r.id}>
                       <td style={{ fontWeight: 500 }}>📄 {r.name}</td>
                       <td>
-                        <span className={`badge ${r.type === '日报' ? 'badge-blue' : r.type === '周报' ? 'badge-green' : r.type === '月报' ? 'badge-yellow' : 'badge-gray'}`}>
-                          {r.type}
+                        <span className={`badge ${rtype === 'daily' ? 'badge-blue' : rtype === 'weekly' ? 'badge-green' : rtype === 'monthly' ? 'badge-yellow' : 'badge-gray'}`}>
+                          {rtype === 'daily' ? '日报' : rtype === 'weekly' ? '周报' : rtype === 'monthly' ? '月报' : '自定义'}
                         </span>
                       </td>
                       <td style={{ color: '#88a0c0', fontSize: 12 }}>{r.period}</td>
-                      <td style={{ fontFamily: 'Consolas', color: '#88a0c0', fontSize: 11 }}>2024-06-{17 - idx} 08:30:00</td>
-                      <td>系统自动</td>
-                      <td style={{ fontFamily: 'Consolas', fontSize: 11, color: '#a0b0c8' }}>{r.size}</td>
+                      <td style={{ fontFamily: 'Consolas', color: '#88a0c0', fontSize: 11 }}>{new Date(r.generatedAt).toLocaleString('zh-CN', { hour12: false })}</td>
+                      <td>{r.generatedBy}</td>
+                      <td style={{ fontFamily: 'Consolas', fontSize: 11, color: '#a0b0c8' }}>{r.fileSize}</td>
                       <td>
                         <div className="flex-row" style={{ gap: 4 }}>
-                          <button className="btn btn-sm btn-primary">下载</button>
-                          <button className="btn btn-sm btn-secondary">预览</button>
+                          <button className="btn btn-sm btn-primary" onClick={() => downloadReport(r.id)}>下载</button>
+                          <button className="btn btn-sm btn-secondary" onClick={() => previewReport(r.id)}>预览</button>
                         </div>
                       </td>
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             </div>

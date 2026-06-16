@@ -1,9 +1,13 @@
 import { create } from 'zustand'
 import {
   Vehicle, Charger, Zone, Entry, AlertEvent, BroadcastMessage, Strategy,
-  Operator, OperationLog, ShiftStatistics, DailyReport, RoadSegment,
+  Operator, OperationLog, ShiftStatistics, DailyReport, RoadSegment, HistoryReport,
   VehicleStatus, ChargerStatus, QueueType, StrategyType, EventType, AlertLevel
 } from '../types'
+
+const STORAGE_KEY = 'logistics_dispatch_state_v1'
+const SYNC_EVENT = 'logistics_dispatch_sync'
+const WINDOW_ID = 'win_' + Math.random().toString(36).substring(2, 10)
 
 interface DispatchState {
   currentOperator: Operator
@@ -20,15 +24,22 @@ interface DispatchState {
   operationLogs: OperationLog[]
   shiftStats: ShiftStatistics | null
   dailyReports: DailyReport[]
+  historyReports: HistoryReport[]
   currentTime: Date
   simulationInterval: NodeJS.Timeout | null
+  isSyncing: boolean
+  windowId: string
 
   initSimulation: () => void
   stopSimulation: () => void
   tick: () => void
 
+  setStatePartial: (partial: Partial<DispatchState>, notifyOthers?: boolean) => void
+  broadcastStateChange: (partial: any) => void
+  listenForSync: () => () => void
+
   setStrategy: (type: StrategyType) => void
-  callNextVehicle: (queueId: string) => Vehicle | null
+  callNextVehicle: (queueId: string) => { vehicle: Vehicle | null; charger: Charger | null }
   forceDispatch: (vehicleId: string, targetChargerId: string) => boolean
   transferVehicle: (vehicleId: string, fromQueueId: string, toQueueId: string) => boolean
 
@@ -36,9 +47,15 @@ interface DispatchState {
   resolveAlert: (alertId: string, operatorId: string, resolution: string) => void
   createAlert: (alert: Partial<AlertEvent>) => AlertEvent
 
-  createBroadcast: (broadcast: Partial<BroadcastMessage>) => BroadcastMessage
+  createBroadcast: (broadcast: Partial<BroadcastMessage>, immediate?: boolean) => BroadcastMessage
   cancelBroadcast: (broadcastId: string) => void
   executeBroadcast: (broadcastId: string) => void
+  saveBroadcastDraft: (broadcast: Partial<BroadcastMessage>) => BroadcastMessage
+
+  generateDailyReport: (date?: string) => HistoryReport
+  generateWeeklyReport: (week?: string) => HistoryReport
+  downloadReport: (reportId: string) => boolean
+  previewReport: (reportId: string) => string | null
 
   addOperationLog: (log: Partial<OperationLog>) => void
 
@@ -397,7 +414,6 @@ const createInitialQueues = (zones: Zone[]) => {
     { type: 'power_180kw', name: '180kW超充队列' },
     { type: 'power_240kw', name: '240kW特快队列' }
   ]
-
   zones.forEach(zone => {
     zone.queues = queueTypes.map((qt, idx) => ({
       id: `q_${zone.id}_${qt.type}`,
@@ -407,12 +423,109 @@ const createInitialQueues = (zones: Zone[]) => {
       entryId: idx % 2 === 0 ? 'entry_1' : 'entry_2',
       laneId: `lane_${(idx % 3) + 1}`,
       maxLength: 15,
-      currentLength: Math.floor(Math.random() * 10 + 2),
+      currentLength: 0,
       vehicles: [],
       averageWaitTime: Math.floor(Math.random() * 30 + 10),
       status: (['normal', 'normal', 'crowded'] as any)[idx % 3]
     }))
   })
+}
+
+const createInitialHistoryReports = (): HistoryReport[] => {
+  const now = new Date()
+  const d = (dayOffset: number) => {
+    const dt = new Date(now)
+    dt.setDate(dt.getDate() - dayOffset)
+    return dt
+  }
+  return [
+    { id: 'r_' + generateId(), name: '2024-06-16 运营日报', type: 'daily', period: '2024-06-16',
+      generatedAt: d(1), generatedBy: '系统自动', fileSize: '1.8MB', status: 'generated',
+      summary: '当日吞吐量1286辆次，充电量48.5MWh，平均等待18.5分钟' },
+    { id: 'r_' + generateId(), name: '2024-W24 周度分析周报', type: 'weekly', period: '2024-W24',
+      generatedAt: d(2), generatedBy: '系统自动', fileSize: '3.2MB', status: 'generated',
+      summary: '本周吞吐量8650辆次，环比增长8.2%，A区利用率最高' },
+    { id: 'r_' + generateId(), name: '2024-06-15 运营日报', type: 'daily', period: '2024-06-15',
+      generatedAt: d(2), generatedBy: '系统自动', fileSize: '1.7MB', status: 'generated',
+      summary: '当日吞吐量1210辆次，充电量45.2MWh' },
+    { id: 'r_' + generateId(), name: '2024-06-14 运营日报', type: 'daily', period: '2024-06-14',
+      generatedAt: d(3), generatedBy: '系统自动', fileSize: '1.9MB', status: 'generated',
+      summary: '当日吞吐量1156辆次，充电量42.8MWh' },
+    { id: 'r_' + generateId(), name: '2024-W23 周度分析周报', type: 'weekly', period: '2024-W23',
+      generatedAt: d(9), generatedBy: '系统自动', fileSize: '3.4MB', status: 'generated',
+      summary: '本周吞吐量7995辆次，平均等待20.3分钟' },
+    { id: 'r_' + generateId(), name: '高峰时段专项分析', type: 'custom', period: '2024-06-10~16',
+      generatedAt: d(1), generatedBy: '张磊', fileSize: '2.5MB', status: 'generated',
+      summary: '午高峰(11-13点)占全天38%流量，建议优化调度' },
+    { id: 'r_' + generateId(), name: '充电桩故障月报', type: 'custom', period: '2024-05',
+      generatedAt: d(17), generatedBy: '系统自动', fileSize: '4.1MB', status: 'generated',
+      summary: '5月共发生充电桩故障12起，B区故障率较高' }
+  ]
+}
+
+function recalcZoneStats(vehicles: Vehicle[], chargers: Charger[], zones: Zone[]): Zone[] {
+  return zones.map(z => {
+    const cs = chargers.filter(c => c.zoneId === z.id)
+    const available = cs.filter(c => c.status === 'available').length
+    const charging = cs.filter(c => c.status === 'charging').length
+    const occupied = cs.filter(c => c.status === 'occupied').length
+    const fault = cs.filter(c => c.status === 'fault').length
+    const queues = z.queues.map(q => {
+      const qv = vehicles.filter(v => v.currentQueue === q.id && v.status === 'queuing')
+      return { ...q, currentLength: qv.length, vehicles: qv.map(v => v.id) }
+    })
+    return { ...z, availableCount: available, chargingCount: charging + occupied, faultCount: fault, queues }
+  })
+}
+
+function generateReportPdf(report: HistoryReport, state: any): string {
+  const content = `
+===========================
+物流园${report.type === 'daily' ? '运营日报' : report.type === 'weekly' ? '周度分析周报' : '分析报告'} - ${report.period}
+===========================
+生成时间: ${new Date().toLocaleString('zh-CN')}
+生成人: ${report.generatedBy}
+
+一、运营概览
+--------------------------
+总服务车辆: ${state.shiftStats?.totalVehicles || 1286} 辆
+完成充电: ${state.shiftStats?.totalCharged || 1156} 辆
+充电总量: ${((state.shiftStats?.totalKWh || 48520) / 1000).toFixed(2)} MWh
+平均等待时长: ${state.shiftStats?.averageWaitTime || 18.5} 分钟
+平均充电时长: ${state.shiftStats?.averageChargeTime || 52.3} 分钟
+平均周转时长: ${state.shiftStats?.averageTurnover || 89.7} 分钟
+高峰时段: ${state.shiftStats?.peakHour || '11:00-12:00'}
+峰值流量: ${state.shiftStats?.peakVolume || 186} 辆/时
+
+二、区域分布
+--------------------------
+${state.zones.map((z: Zone) => `
+${z.name}:
+  服务车辆: ${Math.floor(Math.random() * 400 + 100)} 辆
+  充电量: ${(Math.random() * 20 + 5).toFixed(1)} MWh
+  平均利用率: ${Math.floor(60 + Math.random() * 30)}%
+`).join('')}
+
+三、事件统计
+--------------------------
+拥堵: ${state.shiftStats?.eventsByType?.congestion || 0} 起
+逆行: ${state.shiftStats?.eventsByType?.reverse || 0} 起
+超时占用: ${state.shiftStats?.eventsByType?.occupying || 0} 起
+车辆故障: ${state.shiftStats?.eventsByType?.vehicle_fault || 0} 起
+充电桩故障: ${state.shiftStats?.eventsByType?.charger_fault || 0} 起
+司机失联: ${state.shiftStats?.eventsByType?.driver_missing || 0} 起
+紧急事件: ${state.shiftStats?.eventsByType?.emergency || 0} 起
+
+四、主要问题与建议
+--------------------------
+${state.shiftStats?.topAlerts?.map((a: string, i: number) => `${i + 1}. ${a}`).join('\n') || '暂无'}
+
+===========================
+报告编号: ${report.id}
+系统版本: v2.3.1
+===========================
+`
+  return btoa(unescape(encodeURIComponent(content)))
 }
 
 export const useDispatchStore = create<DispatchState>((set, get) => ({
@@ -430,23 +543,32 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
   operationLogs: [],
   shiftStats: null,
   dailyReports: [],
+  historyReports: [],
   currentTime: new Date(),
   simulationInterval: null,
+  isSyncing: false,
+  windowId: WINDOW_ID,
 
   initSimulation: () => {
     const zones = mockZones.map(z => ({ ...z }))
     createInitialQueues(zones)
+    const initialVehicles = createInitialVehicles()
+    const initialChargers = createInitialChargers()
+    const recalcZones = recalcZoneStats(initialVehicles, initialChargers, zones)
+
+    const shiftStats = createMockShiftStats()
 
     set({
-      vehicles: createInitialVehicles(),
-      chargers: createInitialChargers(),
-      zones,
+      vehicles: initialVehicles,
+      chargers: initialChargers,
+      zones: recalcZones,
       entries: mockEntries.map(e => ({ ...e })),
       roads: createInitialRoads(),
       alerts: createInitialAlerts(),
       broadcasts: createInitialBroadcasts(),
       strategies: createMockStrategies(),
-      shiftStats: createMockShiftStats(),
+      shiftStats,
+      historyReports: createInitialHistoryReports(),
       currentTime: new Date()
     })
 
@@ -455,6 +577,93 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
     }, 3000)
 
     set({ simulationInterval: interval })
+
+    const unlisten = get().listenForSync()
+    ;(window as any).__unlistenSync = unlisten
+  },
+
+  setStatePartial: (partial, notifyOthers = true) => {
+    set(partial)
+    if (notifyOthers) {
+      get().broadcastStateChange(partial)
+    }
+  },
+
+  broadcastStateChange: (partial) => {
+    try {
+      const syncData = {
+        ...partial,
+        __sender: get().windowId,
+        __timestamp: Date.now()
+      }
+      if (typeof window !== 'undefined') {
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(syncData))
+          localStorage.removeItem(STORAGE_KEY)
+        } catch (e) {}
+        const ev = new CustomEvent(SYNC_EVENT, { detail: syncData })
+        window.dispatchEvent(ev)
+      }
+      if ((window as any).electronAPI) {
+        (window as any).electronAPI.notifyOtherWindows(syncData)
+      }
+    } catch (e) {}
+  },
+
+  listenForSync: () => {
+    const storageHandler = (e: StorageEvent) => {
+      if (e.key !== STORAGE_KEY) return
+      try {
+        const data = JSON.parse(e.newValue || '{}')
+        if (data.__sender === get().windowId) return
+        if (get().isSyncing) return
+        set({ isSyncing: true })
+        const safeData = { ...data }
+        delete safeData.__sender
+        delete safeData.__timestamp
+        set(safeData)
+        setTimeout(() => set({ isSyncing: false }), 50)
+      } catch (e) {
+        setTimeout(() => set({ isSyncing: false }), 50)
+      }
+    }
+
+    const customHandler = (e: Event) => {
+      const data = (e as CustomEvent).detail
+      if (data.__sender === get().windowId) return
+      if (get().isSyncing) return
+      set({ isSyncing: true })
+      const safeData = { ...data }
+      delete safeData.__sender
+      delete safeData.__timestamp
+      set(safeData)
+      setTimeout(() => set({ isSyncing: false }), 50)
+    }
+
+    const ipcHandler = (_event: any, data: any) => {
+      if (data.__sender === get().windowId) return
+      if (get().isSyncing) return
+      set({ isSyncing: true })
+      const safeData = { ...data }
+      delete safeData.__sender
+      delete safeData.__timestamp
+      set(safeData)
+      setTimeout(() => set({ isSyncing: false }), 50)
+    }
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('storage', storageHandler)
+      window.addEventListener(SYNC_EVENT, customHandler)
+      if ((window as any).electronAPI) {
+        (window as any).electronAPI.onSyncState(ipcHandler)
+      }
+    }
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('storage', storageHandler)
+        window.removeEventListener(SYNC_EVENT, customHandler)
+      }
+    }
   },
 
   stopSimulation: () => {
@@ -514,10 +723,13 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
       vehicleCount: Math.max(0, r.vehicleCount + Math.floor((Math.random() - 0.5) * 2))
     }))
 
+    const updatedZones = recalcZoneStats(updatedVehicles, updatedChargers, state.zones)
+
     set({
       vehicles: updatedVehicles,
       chargers: updatedChargers,
       roads: updatedRoads,
+      zones: updatedZones,
       currentTime: now
     })
   },
@@ -525,6 +737,7 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
   setStrategy: (type) => {
     const state = get()
     set({ currentStrategy: type })
+    state.broadcastStateChange({ currentStrategy: type })
     state.addOperationLog({
       operatorId: state.currentOperator.id,
       operatorName: state.currentOperator.name,
@@ -544,22 +757,26 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
       .filter(v => v.status === 'queuing' && v.currentQueue === queueId)
       .sort((a, b) => b.priority - a.priority || a.queuePosition - b.queuePosition)
 
-    if (queuingVehicles.length === 0) return null
+    if (queuingVehicles.length === 0) return { vehicle: null, charger: null }
 
     const vehicle = queuingVehicles[0]
     const availableChargers = state.chargers.filter(
       c => c.status === 'available' && c.zoneId === vehicle.zoneId
     )
 
-    if (availableChargers.length === 0) return null
+    if (availableChargers.length === 0) return { vehicle: null, charger: null }
 
     const targetCharger = availableChargers[0]
 
-    const updatedVehicles = state.vehicles.map(v =>
-      v.id === vehicle.id
-        ? { ...v, status: 'moving' as VehicleStatus, assignedCharger: targetCharger.id, queuePosition: 0 }
-        : v
-    )
+    const updatedVehicles = state.vehicles.map(v => {
+      if (v.id === vehicle.id) {
+        return { ...v, status: 'moving' as VehicleStatus, assignedCharger: targetCharger.id, queuePosition: 0 }
+      }
+      if (v.currentQueue === queueId && v.status === 'queuing' && v.id !== vehicle.id) {
+        return { ...v, queuePosition: Math.max(1, v.queuePosition - 1) }
+      }
+      return v
+    })
 
     const updatedChargers = state.chargers.map(c =>
       c.id === targetCharger.id
@@ -567,7 +784,9 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
         : c
     )
 
-    set({ vehicles: updatedVehicles, chargers: updatedChargers })
+    const updatedZones = recalcZoneStats(updatedVehicles, updatedChargers, state.zones)
+
+    state.setStatePartial({ vehicles: updatedVehicles, chargers: updatedChargers, zones: updatedZones }, true)
     state.addOperationLog({
       operatorId: state.currentOperator.id,
       operatorName: state.currentOperator.name,
@@ -580,7 +799,7 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
       remark: `分配至充电桩${targetCharger.code}`
     })
 
-    return vehicle
+    return { vehicle, charger: targetCharger }
   },
 
   forceDispatch: (vehicleId, targetChargerId) => {
@@ -613,7 +832,9 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
       }
     }
 
-    set({ vehicles: updatedVehicles, chargers: updatedChargers })
+    const updatedZones = recalcZoneStats(updatedVehicles, updatedChargers, state.zones)
+
+    state.setStatePartial({ vehicles: updatedVehicles, chargers: updatedChargers, zones: updatedZones }, true)
     state.addOperationLog({
       operatorId: state.currentOperator.id,
       operatorName: state.currentOperator.name,
@@ -631,24 +852,23 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
 
   transferVehicle: (vehicleId, fromQueueId, toQueueId) => {
     const state = get()
-    set({
-      vehicles: state.vehicles.map(v =>
-        v.id === vehicleId ? { ...v, currentQueue: toQueueId } : v
-      )
-    })
+    const updatedVehicles = state.vehicles.map(v =>
+      v.id === vehicleId ? { ...v, currentQueue: toQueueId } : v
+    )
+    const updatedZones = recalcZoneStats(updatedVehicles, state.chargers, state.zones)
+    state.setStatePartial({ vehicles: updatedVehicles, zones: updatedZones }, true)
     return true
   },
 
   acknowledgeAlert: (alertId, operatorId) => {
     const state = get()
     const operator = state.operators.find(o => o.id === operatorId)
-    set({
-      alerts: state.alerts.map(a =>
-        a.id === alertId
-          ? { ...a, acknowledged: true, acknowledgedBy: operatorId, acknowledgedAt: new Date() }
-          : a
-      )
-    })
+    const updatedAlerts = state.alerts.map(a =>
+      a.id === alertId
+        ? { ...a, acknowledged: true, acknowledgedBy: operatorId, acknowledgedAt: new Date() }
+        : a
+    )
+    state.setStatePartial({ alerts: updatedAlerts }, true)
     state.addOperationLog({
       operatorId,
       operatorName: operator?.name || '',
@@ -665,20 +885,19 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
   resolveAlert: (alertId, operatorId, resolution) => {
     const state = get()
     const operator = state.operators.find(o => o.id === operatorId)
-    set({
-      alerts: state.alerts.map(a =>
-        a.id === alertId
-          ? {
-              ...a,
-              resolved: true,
-              resolvedAt: new Date(),
-              resolvedBy: operatorId,
-              resolution,
-              level: a.level === 'critical' ? 'danger' : a.level
-            }
-          : a
-      )
-    })
+    const updatedAlerts = state.alerts.map(a =>
+      a.id === alertId
+        ? {
+            ...a,
+            resolved: true,
+            resolvedAt: new Date(),
+            resolvedBy: operatorId,
+            resolution,
+            level: a.level === 'critical' ? 'danger' : a.level
+          }
+        : a
+    )
+    state.setStatePartial({ alerts: updatedAlerts }, true)
     state.addOperationLog({
       operatorId,
       operatorName: operator?.name || '',
@@ -714,11 +933,52 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
       resolution: null,
       attachments: alert.attachments || []
     }
-    set({ alerts: [newAlert, ...state.alerts] })
+    const updatedAlerts = [newAlert, ...state.alerts]
+    state.setStatePartial({ alerts: updatedAlerts }, true)
     return newAlert
   },
 
-  createBroadcast: (broadcast) => {
+  createBroadcast: (broadcast, immediate = false) => {
+    const state = get()
+    const now = new Date()
+    const status: BroadcastMessage['status'] = immediate ? 'broadcasting' : 'pending'
+    const newBroadcast: BroadcastMessage = {
+      id: 'b_' + generateId(),
+      type: broadcast.type || 'both',
+      title: broadcast.title || '新广播',
+      content: broadcast.content || '',
+      targetZones: broadcast.targetZones || ['all'],
+      targetEntries: broadcast.targetEntries || [],
+      scheduledTime: broadcast.scheduledTime || null,
+      repeatCount: broadcast.repeatCount || 1,
+      repeatInterval: broadcast.repeatInterval || 0,
+      createdAt: now,
+      createdBy: state.currentOperator.id,
+      status,
+      deliveryStatus: immediate ? [
+        ...state.zones.filter(z => broadcast.targetZones?.includes('all') || broadcast.targetZones?.includes(z.id))
+          .map(z => ({ zoneId: z.id, status: 'delivered' as const, time: now })),
+        ...state.entries.filter(e => broadcast.targetEntries?.includes('all') || broadcast.targetEntries?.includes(e.id))
+          .map(e => ({ zoneId: e.id, status: 'delivered' as const, time: now }))
+      ] : []
+    }
+    const updatedBroadcasts = [newBroadcast, ...state.broadcasts]
+    state.setStatePartial({ broadcasts: updatedBroadcasts }, true)
+    state.addOperationLog({
+      operatorId: state.currentOperator.id,
+      operatorName: state.currentOperator.name,
+      action: immediate ? '立即下发广播' : '创建广播',
+      targetType: 'broadcast',
+      targetId: newBroadcast.id,
+      targetName: newBroadcast.title,
+      oldValue: '',
+      newValue: broadcast.content || '',
+      remark: immediate ? '立即下发' : `广播类型: ${broadcast.type}`
+    })
+    return newBroadcast
+  },
+
+  saveBroadcastDraft: (broadcast) => {
     const state = get()
     const newBroadcast: BroadcastMessage = {
       id: 'b_' + generateId(),
@@ -732,46 +992,163 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
       repeatInterval: broadcast.repeatInterval || 0,
       createdAt: new Date(),
       createdBy: state.currentOperator.id,
-      status: 'pending',
+      status: 'draft' as const,
       deliveryStatus: []
     }
-    set({ broadcasts: [newBroadcast, ...state.broadcasts] })
+    const updatedBroadcasts = [newBroadcast, ...state.broadcasts]
+    state.setStatePartial({ broadcasts: updatedBroadcasts }, true)
     state.addOperationLog({
       operatorId: state.currentOperator.id,
       operatorName: state.currentOperator.name,
-      action: '创建广播',
+      action: '保存广播草稿',
       targetType: 'broadcast',
       targetId: newBroadcast.id,
       targetName: newBroadcast.title,
       oldValue: '',
       newValue: broadcast.content || '',
-      remark: `广播类型: ${broadcast.type}`
+      remark: '保存草稿'
     })
     return newBroadcast
   },
 
   cancelBroadcast: (broadcastId) => {
     const state = get()
-    set({
-      broadcasts: state.broadcasts.map(b =>
-        b.id === broadcastId ? { ...b, status: 'cancelled' } : b
-      )
-    })
+    const updatedBroadcasts = state.broadcasts.map(b =>
+      b.id === broadcastId ? { ...b, status: 'cancelled' } : b
+    )
+    state.setStatePartial({ broadcasts: updatedBroadcasts }, true)
   },
 
   executeBroadcast: (broadcastId) => {
     const state = get()
-    set({
-      broadcasts: state.broadcasts.map(b =>
-        b.id === broadcastId
-          ? {
-              ...b,
-              status: 'broadcasting',
-              deliveryStatus: state.zones.map(z => ({ zoneId: z.id, status: 'delivered', time: new Date() }))
-            }
-          : b
-      )
+    const now = new Date()
+    const updatedBroadcasts = state.broadcasts.map((b): BroadcastMessage =>
+      b.id === broadcastId
+        ? {
+            ...b,
+            status: 'broadcasting' as BroadcastMessage['status'],
+            deliveryStatus: [
+              ...state.zones.filter(z => b.targetZones.includes('all') || b.targetZones.includes(z.id))
+                .map(z => ({ zoneId: z.id, status: 'delivered' as const, time: now })),
+              ...state.entries.filter(e => b.targetEntries.includes('all') || b.targetEntries.includes(e.id))
+                .map(e => ({ zoneId: e.id, status: 'delivered' as const, time: now }))
+            ]
+          }
+        : b
+    )
+    state.setStatePartial({ broadcasts: updatedBroadcasts }, true)
+  },
+
+  generateDailyReport: (date) => {
+    const state = get()
+    const reportDate = date || new Date().toISOString().split('T')[0]
+    const report: HistoryReport = {
+      id: 'r_' + generateId(),
+      name: `${reportDate} 运营日报`,
+      type: 'daily',
+      period: reportDate,
+      generatedAt: new Date(),
+      generatedBy: state.currentOperator.name,
+      fileSize: (1.5 + Math.random() * 1).toFixed(1) + 'MB',
+      status: 'generated',
+      summary: `当日吞吐量${state.shiftStats?.totalVehicles || 1286}辆次，充电量${((state.shiftStats?.totalKWh || 48500) / 1000).toFixed(1)}MWh，平均等待${state.shiftStats?.averageWaitTime || 18.5}分钟`
+    }
+    const pdfData = generateReportPdf(report, state)
+    const reportWithPdf = { ...report, pdfData }
+    const updatedReports = [reportWithPdf, ...state.historyReports]
+    state.setStatePartial({ historyReports: updatedReports }, true)
+    state.addOperationLog({
+      operatorId: state.currentOperator.id,
+      operatorName: state.currentOperator.name,
+      action: '生成日报',
+      targetType: 'report',
+      targetId: report.id,
+      targetName: report.name,
+      oldValue: '',
+      newValue: '',
+      remark: `生成日报 ${reportDate}`
     })
+    return reportWithPdf
+  },
+
+  generateWeeklyReport: (week) => {
+    const state = get()
+    const now = new Date()
+    const w = week || `${now.getFullYear()}-W${String(Math.ceil(now.getDate() / 7)).padStart(2, '0')}`
+    const report: HistoryReport = {
+      id: 'r_' + generateId(),
+      name: `${w} 周度分析周报`,
+      type: 'weekly',
+      period: w,
+      generatedAt: new Date(),
+      generatedBy: state.currentOperator.name,
+      fileSize: (2.5 + Math.random() * 2).toFixed(1) + 'MB',
+      status: 'generated',
+      summary: `本周吞吐量${Math.floor((state.shiftStats?.totalVehicles || 1286) * 6.5)}辆次，环比增长${(Math.random() * 10 - 2).toFixed(1)}%`
+    }
+    const pdfData = generateReportPdf(report, state)
+    const reportWithPdf = { ...report, pdfData }
+    const updatedReports = [reportWithPdf, ...state.historyReports]
+    state.setStatePartial({ historyReports: updatedReports }, true)
+    state.addOperationLog({
+      operatorId: state.currentOperator.id,
+      operatorName: state.currentOperator.name,
+      action: '生成周报',
+      targetType: 'report',
+      targetId: report.id,
+      targetName: report.name,
+      oldValue: '',
+      newValue: '',
+      remark: `生成周报 ${w}`
+    })
+    return reportWithPdf
+  },
+
+  previewReport: (reportId) => {
+    const state = get()
+    const report = state.historyReports.find(r => r.id === reportId)
+    if (!report || !report.pdfData) return null
+    try {
+      const decoded = decodeURIComponent(escape(atob(report.pdfData)))
+      const blob = new Blob([decoded], { type: 'text/plain;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      window.open(url, '_blank', 'width=800,height=600')
+      return url
+    } catch (e) {
+      return null
+    }
+  },
+
+  downloadReport: (reportId) => {
+    const state = get()
+    const report = state.historyReports.find(r => r.id === reportId)
+    if (!report || !report.pdfData) return false
+    try {
+      const decoded = decodeURIComponent(escape(atob(report.pdfData)))
+      const blob = new Blob([decoded], { type: 'text/plain;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${report.name}.txt`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      state.addOperationLog({
+        operatorId: state.currentOperator.id,
+        operatorName: state.currentOperator.name,
+        action: '下载报表',
+        targetType: 'report',
+        targetId: report.id,
+        targetName: report.name,
+        oldValue: '',
+        newValue: '',
+        remark: `下载报表 ${report.name}`
+      })
+      return true
+    } catch (e) {
+      return false
+    }
   },
 
   addOperationLog: (log) => {

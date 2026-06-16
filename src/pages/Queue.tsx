@@ -84,11 +84,15 @@ function Queue() {
   }
 
   const handleCallNext = (queueId: string) => {
-    const v = callNextVehicle(queueId)
-    if (v) {
-      alert(`叫号成功：${v.plateNumber} 请前往指定充电桩`)
-    } else {
-      alert('队列已空或无可用充电桩')
+    const result = callNextVehicle(queueId)
+    if (result.vehicle && result.charger) {
+      const v = result.vehicle
+      const c = result.charger
+      alert(`叫号成功！\n\n车辆 ${v.plateNumber}\n\n请前往 ${c.zoneId?.toUpperCase()}区 ${c.code} 充电桩\n\n功率: ${c.power}kW`)
+    } else if (!result.vehicle) {
+      alert('该队列已空，没有排队车辆')
+    } else if (!result.charger) {
+      alert('当前区域无可用充电桩，请稍后再叫号或手动调度')
     }
   }
 

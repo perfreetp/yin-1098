@@ -36,8 +36,10 @@ function createWindow(type) {
     backgroundColor: '#0a0f1a',
     show: false,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false
     }
   })
 
@@ -58,6 +60,9 @@ function createAllWindows() {
   createWindow('dashboard')
   setTimeout(() => createWindow('queue'), 200)
   setTimeout(() => createWindow('events'), 400)
+  setTimeout(() => createWindow('broadcast'), 600)
+  setTimeout(() => createWindow('review'), 800)
+  setTimeout(() => createWindow('settings'), 1000)
 }
 
 app.whenReady().then(() => {
@@ -83,6 +88,18 @@ ipcMain.handle('window:close', (_event, type) => {
 })
 
 ipcMain.handle('window:list', () => Array.from(windows.keys()))
+
+ipcMain.handle('window:show', (_event, type) => {
+  const win = windows.get(type)
+  if (win) { if (win.isMinimized()) win.restore(); win.focus(); return true }
+  return false
+})
+
+ipcMain.handle('window:minimize', (_event, type) => {
+  const win = windows.get(type)
+  if (win) { win.minimize(); return true }
+  return false
+})
 
 ipcMain.on('dispatch:notify', (event, data) => {
   windows.forEach((win) => {

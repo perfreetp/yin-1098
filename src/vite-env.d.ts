@@ -5,7 +5,9 @@ interface Window {
     openWindow: (type: string) => Promise<boolean>
     closeWindow: (type: string) => Promise<boolean>
     listWindows: () => Promise<string[]>
-    notifyDispatch: (data: any) => void
-    onDispatchNotify: (callback: (data: any) => void) => void
+    showWindow: (type: string) => Promise<boolean>
+    minimizeWindow: (type: string) => Promise<boolean>
+    notifyOtherWindows: (data: any) => void
+    onSyncState: (callback: (event: any, data: any) => void) => () => void
   }
 }
