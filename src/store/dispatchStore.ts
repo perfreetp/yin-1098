@@ -7,7 +7,37 @@ import {
 
 const STORAGE_KEY = 'logistics_dispatch_state_v1'
 const SYNC_EVENT = 'logistics_dispatch_sync'
+const PERSIST_KEY = 'logistics_dispatch_persist_v1'
 const WINDOW_ID = 'win_' + Math.random().toString(36).substring(2, 10)
+
+function saveStateToStorage(state: Partial<DispatchState>) {
+  try {
+    const persistKeys = ['vehicles', 'chargers', 'zones', 'alerts', 'broadcasts', 'currentStrategy', 'historyReports', 'operationLogs', 'shiftStats']
+    const toSave: any = {}
+    persistKeys.forEach(k => {
+      if ((state as any)[k] !== undefined) {
+        toSave[k] = (state as any)[k]
+      }
+    })
+    if (Object.keys(toSave).length > 0) {
+      const existing = localStorage.getItem(PERSIST_KEY)
+      const existingData = existing ? JSON.parse(existing) : {}
+      localStorage.setItem(PERSIST_KEY, JSON.stringify({ ...existingData, ...toSave, __lastUpdate: Date.now() }))
+    }
+  } catch (e) {}
+}
+
+function loadStateFromStorage(): Partial<DispatchState> | null {
+  try {
+    const data = localStorage.getItem(PERSIST_KEY)
+    if (!data) return null
+    const parsed = JSON.parse(data)
+    if (!parsed.__lastUpdate) return null
+    return parsed
+  } catch (e) {
+    return null
+  }
+}
 
 interface DispatchState {
   currentOperator: Operator
@@ -29,6 +59,7 @@ interface DispatchState {
   simulationInterval: NodeJS.Timeout | null
   isSyncing: boolean
   windowId: string
+  initialized: boolean
 
   initSimulation: () => void
   stopSimulation: () => void
@@ -37,6 +68,7 @@ interface DispatchState {
   setStatePartial: (partial: Partial<DispatchState>, notifyOthers?: boolean) => void
   broadcastStateChange: (partial: any) => void
   listenForSync: () => () => void
+  resetPersistData: () => void
 
   setStrategy: (type: StrategyType) => void
   callNextVehicle: (queueId: string) => { vehicle: Vehicle | null; charger: Charger | null }
@@ -214,7 +246,7 @@ const createInitialVehicles = (): Vehicle[] => {
       vehicleType: i % 4 === 0 ? 'bus' : i % 3 === 0 ? 'van' : i % 5 === 0 ? 'small' : 'truck',
       driverName: driverNames[i % driverNames.length],
       driverPhone: '138****' + String(1000 + i * 137).slice(-4),
-      currentQueue: `q_${queueType}`,
+      currentQueue: `q_${zoneId}_${queueType}`,
       queuePosition: status === 'queuing' ? (i % 8) + 1 : 0,
       status,
       entryTime: new Date(now.getTime() - entryMinutesAgo * 60000),
@@ -548,15 +580,69 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
   simulationInterval: null,
   isSyncing: false,
   windowId: WINDOW_ID,
+  initialized: false,
 
   initSimulation: () => {
-    const zones = mockZones.map(z => ({ ...z }))
-    createInitialQueues(zones)
-    const initialVehicles = createInitialVehicles()
-    const initialChargers = createInitialChargers()
-    const recalcZones = recalcZoneStats(initialVehicles, initialChargers, zones)
+    const state = get()
+    if (state.initialized && state.simulationInterval) {
+      return
+    }
+    if (state.simulationInterval) {
+      clearInterval(state.simulationInterval)
+    }
 
-    const shiftStats = createMockShiftStats()
+    const persisted = loadStateFromStorage()
+    let zones = mockZones.map(z => ({ ...z }))
+    createInitialQueues(zones)
+    let initialVehicles = createInitialVehicles()
+    let initialChargers = createInitialChargers()
+    let initialAlerts = createInitialAlerts()
+    let initialBroadcasts = createInitialBroadcasts()
+    let initialHistoryReports = createInitialHistoryReports()
+    let initialShiftStats = createMockShiftStats()
+    let currentStrategy: StrategyType = 'normal'
+    let initialLogs: OperationLog[] = []
+
+    if (persisted) {
+      if (persisted.vehicles) initialVehicles = persisted.vehicles.map((v: any) => ({
+        ...v,
+        arrivedAt: new Date(v.arrivedAt),
+        scheduledAt: v.scheduledAt ? new Date(v.scheduledAt) : null,
+        completedAt: v.completedAt ? new Date(v.completedAt) : null
+      }))
+      if (persisted.chargers) initialChargers = persisted.chargers
+      if (persisted.zones) zones = persisted.zones.map((z: any) => ({
+        ...z,
+        queues: z.queues || []
+      }))
+      if (persisted.alerts) initialAlerts = persisted.alerts.map((a: any) => ({
+        ...a,
+        createdAt: new Date(a.createdAt),
+        acknowledgedAt: a.acknowledgedAt ? new Date(a.acknowledgedAt) : null,
+        resolvedAt: a.resolvedAt ? new Date(a.resolvedAt) : null
+      }))
+      if (persisted.broadcasts) initialBroadcasts = persisted.broadcasts.map((b: any) => ({
+        ...b,
+        createdAt: new Date(b.createdAt),
+        scheduledTime: b.scheduledTime ? new Date(b.scheduledTime) : null,
+        deliveryStatus: (b.deliveryStatus || []).map((d: any) => ({
+          ...d,
+          time: new Date(d.time)
+        }))
+      }))
+      if (persisted.historyReports) initialHistoryReports = persisted.historyReports.map((r: any) => ({
+        ...r,
+        generatedAt: new Date(r.generatedAt)
+      }))
+      if (persisted.shiftStats) initialShiftStats = persisted.shiftStats
+      if (persisted.currentStrategy) currentStrategy = persisted.currentStrategy
+      if (persisted.operationLogs) initialLogs = persisted.operationLogs.map((l: any) => ({
+        ...l,
+        timestamp: new Date(l.timestamp)
+      }))
+    }
+
+    const recalcZones = recalcZoneStats(initialVehicles, initialChargers, zones)
 
     set({
       vehicles: initialVehicles,
@@ -564,11 +650,13 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
       zones: recalcZones,
       entries: mockEntries.map(e => ({ ...e })),
       roads: createInitialRoads(),
-      alerts: createInitialAlerts(),
-      broadcasts: createInitialBroadcasts(),
+      alerts: initialAlerts,
+      broadcasts: initialBroadcasts,
       strategies: createMockStrategies(),
-      shiftStats,
-      historyReports: createInitialHistoryReports(),
+      currentStrategy,
+      shiftStats: initialShiftStats,
+      historyReports: initialHistoryReports,
+      operationLogs: initialLogs,
       currentTime: new Date()
     })
 
@@ -576,7 +664,7 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
       get().tick()
     }, 3000)
 
-    set({ simulationInterval: interval })
+    set({ simulationInterval: interval, initialized: true })
 
     const unlisten = get().listenForSync()
     ;(window as any).__unlistenSync = unlisten
@@ -584,6 +672,7 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
 
   setStatePartial: (partial, notifyOthers = true) => {
     set(partial)
+    saveStateToStorage(partial)
     if (notifyOthers) {
       get().broadcastStateChange(partial)
     }
@@ -725,19 +814,30 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
 
     const updatedZones = recalcZoneStats(updatedVehicles, updatedChargers, state.zones)
 
-    set({
+    const partialState = {
       vehicles: updatedVehicles,
       chargers: updatedChargers,
       roads: updatedRoads,
       zones: updatedZones,
       currentTime: now
-    })
+    }
+    set(partialState)
+    saveStateToStorage(partialState)
+  },
+
+  resetPersistData: () => {
+    try {
+      localStorage.removeItem(PERSIST_KEY)
+    } catch (e) {}
+    set({ initialized: false })
   },
 
   setStrategy: (type) => {
     const state = get()
-    set({ currentStrategy: type })
-    state.broadcastStateChange({ currentStrategy: type })
+    const partial = { currentStrategy: type }
+    set(partial)
+    saveStateToStorage(partial)
+    state.broadcastStateChange(partial)
     state.addOperationLog({
       operatorId: state.currentOperator.id,
       operatorName: state.currentOperator.name,
@@ -1013,8 +1113,8 @@ export const useDispatchStore = create<DispatchState>((set, get) => ({
 
   cancelBroadcast: (broadcastId) => {
     const state = get()
-    const updatedBroadcasts = state.broadcasts.map(b =>
-      b.id === broadcastId ? { ...b, status: 'cancelled' } : b
+    const updatedBroadcasts = state.broadcasts.map((b): BroadcastMessage =>
+      b.id === broadcastId ? { ...b, status: 'cancelled' as const } : b
     )
     state.setStatePartial({ broadcasts: updatedBroadcasts }, true)
   },

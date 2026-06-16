@@ -4,7 +4,7 @@ import PageHeader from '../components/PageHeader'
 import { StrategyType } from '../types'
 
 function Settings() {
-  const { strategies, currentStrategy, setStrategy, zones, entries, operators, currentOperator, operationLogs } = useDispatchStore()
+  const { strategies, currentStrategy, setStrategy, zones, entries, operators, currentOperator, operationLogs, resetPersistData, initialized } = useDispatchStore()
 
   const [tab, setTab] = useState<'strategy' | 'queue' | 'zone' | 'operator' | 'system' | 'logs'>('strategy')
   const [soundEnabled, setSoundEnabled] = useState(true)
@@ -463,6 +463,26 @@ function Settings() {
                     </div>
                   </div>
                 </div>
+              </div>
+
+              <div style={{
+                padding: 18, background: 'rgba(255, 80, 80, 0.06)',
+                border: '1px solid rgba(255, 80, 80, 0.2)', borderRadius: 6
+              }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: '#ff6666', marginBottom: 10 }}>⚠️ 危险操作</div>
+                <div style={{ fontSize: 12, color: '#a0b0c8', marginBottom: 14 }}>
+                  重置所有数据将清空本地持久化状态，刷新页面后恢复为初始模拟数据
+                </div>
+                <button className="btn btn-danger" onClick={() => {
+                  if (confirm('确定要重置所有数据吗？所有窗口刷新后将恢复为初始模拟数据。')) {
+                    resetPersistData()
+                    setTimeout(() => {
+                      window.location.reload()
+                    }, 500)
+                  }
+                }}>
+                  🔄 重置所有数据
+                </button>
               </div>
 
               <div className="flex-row" style={{ gap: 10, justifyContent: 'flex-end' }}>

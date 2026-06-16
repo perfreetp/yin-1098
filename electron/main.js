@@ -47,7 +47,7 @@ function createWindow(type) {
   if (devUrl) {
     win.loadURL(devUrl + '#/' + type)
   } else {
-    win.loadFile(path.join(__dirname, '../dist/index.html'), { hash: type })
+    win.loadFile(path.join(__dirname, '../dist/index.html'), { hash: '/' + type })
   }
 
   win.on('ready-to-show', () => win.show())

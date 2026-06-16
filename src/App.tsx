@@ -9,13 +9,15 @@ import { useDispatchStore } from './store/dispatchStore'
 
 function App() {
   const [route, setRoute] = useState<string>('dashboard')
-  const { initSimulation } = useDispatchStore()
+  const { initSimulation, initialized } = useDispatchStore()
 
   useEffect(() => {
     const hash = window.location.hash.replace('#/', '') || 'dashboard'
     setRoute(hash)
-    initSimulation()
-  }, [])
+    if (!initialized) {
+      initSimulation()
+    }
+  }, [initialized])
 
   useEffect(() => {
     const handleHashChange = () => {

@@ -33,9 +33,18 @@ function PageHeader({ currentPage, title }: Props) {
 
   const strategy = strategies.find(s => s.type === currentStrategy)
 
-  const handleNav = (key: string) => {
+  const handleNav = async (key: string) => {
     if ((window as any).electronAPI) {
-      (window as any).electronAPI.openWindow(key)
+      try {
+        const windows = await (window as any).electronAPI.listWindows()
+        if (windows.includes(key)) {
+          await (window as any).electronAPI.showWindow(key)
+        } else {
+          await (window as any).electronAPI.openWindow(key)
+        }
+      } catch (e) {
+        window.location.hash = key
+      }
     } else {
       window.location.hash = key
     }
